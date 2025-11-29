@@ -1,0 +1,7 @@
+services:
+  uptime-monitor:
+    build: .
+    container_name: uptime-monitor
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
