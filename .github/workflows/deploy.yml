@@ -24,6 +24,11 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
+    
+    environment:
+      name: production
+      url: http://${{ secrets.SERVER_IP }}
+
     steps:
       - uses: actions/checkout@v4
 
