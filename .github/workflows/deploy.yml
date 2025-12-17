@@ -27,7 +27,6 @@ jobs:
     
     environment:
       name: production
-      url: http://${{ secrets.SERVER_IP }}
 
     steps:
       - uses: actions/checkout@v4
