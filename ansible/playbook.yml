@@ -1,0 +1,62 @@
+---
+- name: Deploy Uptime Monitor App
+  hosts: myserver
+  become: true
+
+  vars:
+    remote_project_dir: /home/ubuntu/uptime-monitor
+
+  tasks:
+    - name: Update apt and install required system packages
+      apt:
+        update_cache: yes
+        name: [ 'curl', 'python3-pip' ]
+        state: present
+
+    - name: Download Docker installation script
+      get_url:
+        url: https://get.docker.com
+        dest: /tmp/get-docker.sh
+        mode: '0700'
+
+    - name: Run Docker installation script
+      command: /tmp/get-docker.sh
+      args:
+        creates: /usr/bin/docker
+
+    - name: Add user ubuntu to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Create project directory on server
+      file:
+        path: "{{ remote_project_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Copy App files to server
+      copy:
+        src: "../{{ item }}"
+        dest: "{{ remote_project_dir }}/"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+      loop:
+        - app.py
+        - Dockerfile
+        - docker-compose.yml
+
+    - name: Stop old containers (if running)
+      command: docker compose down
+      args:
+        chdir: "{{ remote_project_dir }}"
+      ignore_errors: yes
+
+    - name: Start Application
+      command: docker compose up -d --build
+      args:
+        chdir: "{{ remote_project_dir }}"
