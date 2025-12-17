@@ -1,7 +1,7 @@
 all:
   hosts:
     myserver:
-      ansible_host: 3.124.11.70 # Replace this with your actual AWS Public IP
+      ansible_host: 18.185.77.156 # Replace this with your actual AWS Public IP
       ansible_user: ubuntu
       ansible_ssh_private_key_file: ../terraform/ssh-keys/uptime_key
       ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
