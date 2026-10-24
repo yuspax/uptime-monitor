@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: uptime
+  namespace: argocd
+spec:
+  description: Uptime Monitor application and monitoring
+  sourceRepos:
+    - https://github.com/yuspax/uptime-monitor.git
+    - https://prometheus-community.github.io/helm-charts
+    - https://grafana-community.github.io/helm-charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: uptime
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: storage.k8s.io
+      kind: StorageClass
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding

@@ -1,0 +1,108 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: uptime-app
+  namespace: argocd
+spec:
+  project: uptime
+  source:
+    repoURL: https://github.com/yuspax/uptime-monitor.git
+    targetRevision: master
+    path: k8s/app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: uptime
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - FailOnSharedResource=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: uptime-dashboards
+  namespace: argocd
+spec:
+  project: uptime
+  source:
+    repoURL: https://github.com/yuspax/uptime-monitor.git
+    targetRevision: master
+    path: dashboards
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: uptime
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - FailOnSharedResource=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: uptime-prometheus
+  namespace: argocd
+spec:
+  project: uptime
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: prometheus
+      targetRevision: 29.37.2
+      helm:
+        releaseName: uptime-prometheus
+        skipTests: true
+        valueFiles:
+          - $values/helm/prometheus-values.yaml
+    - repoURL: https://github.com/yuspax/uptime-monitor.git
+      targetRevision: master
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: uptime
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - FailOnSharedResource=true
+      - PruneLast=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: uptime-grafana
+  namespace: argocd
+spec:
+  project: uptime
+  sources:
+    - repoURL: https://grafana-community.github.io/helm-charts
+      chart: grafana
+      targetRevision: 14.0.1
+      helm:
+        releaseName: uptime-grafana
+        skipTests: true
+        valueFiles:
+          - $values/helm/grafana-values.yaml
+    - repoURL: https://github.com/yuspax/uptime-monitor.git
+      targetRevision: master
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: uptime
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - FailOnSharedResource=true
+      - PruneLast=true
