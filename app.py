@@ -1,41 +1,116 @@
-import platform
-import subprocess
-import time
+import logging
 import os
-from datetime import datetime
+import signal
+import threading
+import time
+from contextlib import closing
+from datetime import datetime, timezone
 
-sites = ["google.com", "facebook.com", "github.com", "goooogle.com"]
-log_file = "logs/ping_log.txt"
+import psycopg2
+import requests
 
-os.makedirs("logs", exist_ok=True)
+SITES = [
+    site.strip()
+    for site in os.getenv("MONITOR_SITES", "https://google.com,https://github.com").split(",")
+    if site.strip()
+]
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_NAME = os.getenv("DB_NAME", "uptime")
+DB_USER = os.getenv("DB_USER", "uptime_agent")
+DB_PASS = os.getenv("DB_PASS")
+STOP_EVENT = threading.Event()
 
 
-def ping(host):
-    param = '-n' if platform.system().lower() == 'windows' else '-c'
-    command = ['ping', param, '1', host]
+def connect_db():
+    return psycopg2.connect(
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASS,
+        connect_timeout=5,
+    )
+
+
+def init_db():
+    for attempt in range(1, 13):
+        try:
+            with closing(connect_db()) as conn:
+                with conn, conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS http_logs (
+                            id SERIAL PRIMARY KEY,
+                            timestamp TIMESTAMPTZ NOT NULL,
+                            site VARCHAR(255) NOT NULL,
+                            status VARCHAR(50) NOT NULL,
+                            status_code INT NOT NULL,
+                            latency_ms INT NOT NULL
+                        )
+                    """)
+            logging.info("Database initialized successfully.")
+            return True
+        except psycopg2.Error as error:
+            logging.warning("Database initialization failed (%s/12): %s", attempt, error)
+            if attempt == 12:
+                raise SystemExit("Database initialization failed after 12 attempts.") from error
+            if STOP_EVENT.wait(5):
+                return False
+    return False
+
+
+def check_site(url):
+    start_time = time.perf_counter()
     try:
-        subprocess.check_call(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        response = requests.get(url, timeout=5)
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+        status = "UP" if response.status_code < 400 else "DOWN"
+        return status, response.status_code, latency_ms
+    except requests.exceptions.RequestException:
+        return "DOWN", 0, 0
+
+
+def write_to_db(timestamp, site, status, status_code, latency_ms):
+    try:
+        with closing(connect_db()) as conn:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO http_logs "
+                    "(timestamp, site, status, status_code, latency_ms) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (timestamp, site, status, status_code, latency_ms),
+                )
         return True
-    except subprocess.CalledProcessError:
+    except psycopg2.Error as error:
+        logging.error("Failed to write to database: %s", error)
         return False
 
 
-def write_log(message):
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(message + "\n")
+def stop(signum, frame):
+    STOP_EVENT.set()
 
 
 def main():
-    while True:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if not DB_PASS:
+        raise SystemExit("DB_PASS must be set.")
+    if not SITES:
+        raise SystemExit("MONITOR_SITES must contain at least one URL.")
 
-        for site in sites:
-            status = "UP" if ping(site) else "DOWN"
-            log_message = f"[{timestamp}] {site}: {status}"
-            print(log_message)
-            write_log(log_message)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    logging.info("Starting uptime agent for: %s", SITES)
+    if not init_db():
+        return
 
-        time.sleep(60)
+    while not STOP_EVENT.is_set():
+        for site in SITES:
+            if STOP_EVENT.is_set():
+                break
+            status, status_code, latency = check_site(site)
+            logging.info("%s | %s | Code: %s | Latency: %sms", site, status, status_code, latency)
+            write_to_db(datetime.now(timezone.utc), site, status, status_code, latency)
+        STOP_EVENT.wait(60)
+
+    logging.info("Uptime agent stopped.")
 
 
 if __name__ == "__main__":

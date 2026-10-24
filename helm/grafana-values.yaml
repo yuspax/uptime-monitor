@@ -1,0 +1,97 @@
+deploymentStrategy:
+  type: Recreate
+
+service:
+  type: ClusterIP
+
+persistence:
+  enabled: true
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  storageClassName: uptime-gp3
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+rbac:
+  namespaced: true
+
+admin:
+  existingSecret: uptime-secrets
+  userKey: GRAFANA_ADMIN_USER
+  passwordKey: GRAFANA_ADMIN_PASSWORD
+
+envValueFrom:
+  GRAFANA_DB_PASS:
+    secretKeyRef:
+      name: uptime-secrets
+      key: GRAFANA_DB_PASS
+
+sidecar:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    searchNamespace: uptime
+    resource: configmap
+    provider:
+      folder: Uptime Monitor
+      folderUid: uptime-monitor
+      allowUiUpdates: false
+
+grafana.ini:
+  analytics:
+    check_for_updates: false
+    check_for_plugin_updates: false
+    reporting_enabled: false
+  users:
+    allow_sign_up: false
+  auth.anonymous:
+    enabled: false
+  dashboards:
+    default_home_dashboard_path: /tmp/dashboards/uptime-dashboard.json
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+    - name: PostgreSQL
+      type: postgres
+      uid: cg20yu0bk4wzka
+      access: proxy
+      editable: false
+      url: postgres-service:5432
+      user: grafana_reader
+      secureJsonData:
+        password: $GRAFANA_DB_PASS
+      jsonData:
+        database: uptime
+        sslmode: disable
+        postgresVersion: 1500
+        maxOpenConns: 5
+        maxIdleConns: 2
+    - name: Prometheus
+      type: prometheus
+      uid: dg21036vdvk00d
+      access: proxy
+      editable: false
+      url: http://uptime-prometheus-server:80
+      isDefault: true
+      jsonData:
+        httpMethod: POST
+        timeInterval: 30s

@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+data:
+  01-init.sh: |
+    set -eu
+    psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set ON_ERROR_STOP=1 <<'SQL'
+    \getenv database_name POSTGRES_DB
+    \getenv agent_user DB_USER
+    \getenv agent_password DB_PASS
+    \getenv grafana_user GRAFANA_DB_USER
+    \getenv grafana_password GRAFANA_DB_PASS
+    CREATE ROLE :"agent_user" LOGIN PASSWORD :'agent_password';
+    CREATE ROLE :"grafana_user" LOGIN PASSWORD :'grafana_password';
+    REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+    GRANT CONNECT ON DATABASE :"database_name" TO :"agent_user", :"grafana_user";
+    GRANT USAGE, CREATE ON SCHEMA public TO :"agent_user";
+    GRANT USAGE ON SCHEMA public TO :"grafana_user";
+    ALTER DEFAULT PRIVILEGES FOR ROLE :"agent_user" IN SCHEMA public GRANT SELECT ON TABLES TO :"grafana_user";
+    SQL

@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: uptime
+resources:
+  - namespace.yaml
+  - storageclass.yaml
+  - configmap.yaml
+  - postgres-init.yaml
+  - postgres.yaml
+  - agent.yaml
+images:
+  - name: uptime-agent
+    newName: 429502077676.dkr.ecr.eu-central-1.amazonaws.com/uptime-lab-cluster-agent
+    newTag: bootstrap-273a7163a5bf
