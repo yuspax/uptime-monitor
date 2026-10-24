@@ -11,4 +11,4 @@ resources:
 images:
   - name: uptime-agent
     newName: 429502077676.dkr.ecr.eu-central-1.amazonaws.com/uptime-lab-cluster-agent
-    newTag: bootstrap-273a7163a5bf
+    newTag: f0c6872361afa86839512b5e6d7bb8939399d579
