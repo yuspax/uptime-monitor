@@ -1,13 +1,14 @@
 import logging
 import os
-import signal
 import threading
 import time
-from contextlib import closing
+from contextlib import asynccontextmanager, closing
 from datetime import datetime, timezone
 
 import psycopg2
 import requests
+from fastapi import FastAPI, HTTPException, Query
+from psycopg2.extras import RealDictCursor
 
 SITES = [
     site.strip()
@@ -18,7 +19,10 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_NAME = os.getenv("DB_NAME", "uptime")
 DB_USER = os.getenv("DB_USER", "uptime_agent")
 DB_PASS = os.getenv("DB_PASS")
+CHECK_INTERVAL = 60
+HEALTH_TIMEOUT = 300
 STOP_EVENT = threading.Event()
+last_loop_at = time.monotonic()
 
 
 def connect_db():
@@ -84,23 +88,8 @@ def write_to_db(timestamp, site, status, status_code, latency_ms):
         return False
 
 
-def stop(signum, frame):
-    STOP_EVENT.set()
-
-
-def main():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    if not DB_PASS:
-        raise SystemExit("DB_PASS must be set.")
-    if not SITES:
-        raise SystemExit("MONITOR_SITES must contain at least one URL.")
-
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
-    logging.info("Starting uptime agent for: %s", SITES)
-    if not init_db():
-        return
-
+def check_loop():
+    global last_loop_at
     while not STOP_EVENT.is_set():
         for site in SITES:
             if STOP_EVENT.is_set():
@@ -108,10 +97,67 @@ def main():
             status, status_code, latency = check_site(site)
             logging.info("%s | %s | Code: %s | Latency: %sms", site, status, status_code, latency)
             write_to_db(datetime.now(timezone.utc), site, status, status_code, latency)
-        STOP_EVENT.wait(60)
+        last_loop_at = time.monotonic()
+        STOP_EVENT.wait(CHECK_INTERVAL)
 
+
+def read_from_db(query, params=()):
+    try:
+        with closing(connect_db()) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(query, params)
+                return cur.fetchall()
+    except psycopg2.Error as error:
+        logging.error("Failed to read from database: %s", error)
+        raise HTTPException(status_code=503, detail="Database is unavailable") from error
+
+
+@asynccontextmanager
+async def lifespan(app):
+    global last_loop_at
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if not DB_PASS:
+        raise SystemExit("DB_PASS must be set.")
+    if not SITES:
+        raise SystemExit("MONITOR_SITES must contain at least one URL.")
+
+    logging.info("Starting uptime agent for: %s", SITES)
+    init_db()
+    STOP_EVENT.clear()
+    last_loop_at = time.monotonic()
+    worker = threading.Thread(target=check_loop, daemon=True)
+    worker.start()
+    yield
+    STOP_EVENT.set()
+    worker.join(timeout=10)
     logging.info("Uptime agent stopped.")
 
 
-if __name__ == "__main__":
-    main()
+app = FastAPI(title="Uptime Monitor", lifespan=lifespan)
+
+
+@app.get("/health")
+def health():
+    if time.monotonic() - last_loop_at > HEALTH_TIMEOUT:
+        raise HTTPException(status_code=503, detail="Check loop is stalled")
+    return {"status": "ok"}
+
+
+@app.get("/sites")
+def sites_status():
+    return read_from_db("""
+        SELECT DISTINCT ON (site) site, status, status_code, latency_ms, timestamp
+        FROM http_logs
+        ORDER BY site, timestamp DESC
+    """)
+
+
+@app.get("/sites/history")
+def site_history(site: str, limit: int = Query(100, ge=1, le=1000)):
+    if site not in SITES:
+        raise HTTPException(status_code=404, detail="Site is not monitored")
+    return read_from_db(
+        "SELECT site, status, status_code, latency_ms, timestamp "
+        "FROM http_logs WHERE site = %s ORDER BY timestamp DESC LIMIT %s",
+        (site, limit),
+    )

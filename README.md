@@ -22,7 +22,16 @@ The project is intended for learning and portfolio use. The AWS setup has one wo
 
 The Python agent sends an HTTP request to each configured website. A response below HTTP 400 is recorded as `UP`; an HTTP error or failed request is recorded as `DOWN`. It stores the timestamp, website URL, status, HTTP code, and response time in the `http_logs` table, then waits 60 seconds before the next batch.
 
-The agent is a background process. Its output is logs and database records. Grafana provides the browser interface.
+The agent is a FastAPI application. Checks run in a background thread, and a small HTTP API on port 8000 returns the stored results:
+
+| Endpoint | What it returns |
+| --- | --- |
+| `GET /health` | `200` while the check loop is running, `503` if it has stalled for 5 minutes |
+| `GET /sites` | Latest result for each website |
+| `GET /sites/history?site=<url>&limit=100` | Recent results for one configured website (`limit` up to 1000) |
+| `GET /docs` | Interactive API documentation |
+
+Grafana remains the main browser interface for charts.
 
 There are two ways to run the project:
 
@@ -79,12 +88,12 @@ Some Kubernetes terms used in the files:
 
 | File | What it does |
 | --- | --- |
-| `app.py` | HTTP checks, database connections, table creation, inserts, logging, and shutdown handling |
-| `Dockerfile` | Build the agent image using Python 3.12 and run it as a non-root user |
-| `requirements.txt` | Pinned application dependencies: Requests and psycopg2 |
-| `requirements-dev.txt` | Application dependencies plus pytest and Flake8 |
+| `app.py` | FastAPI app: HTTP checks in a background thread, database access, health check, and read API |
+| `Dockerfile` | Build the agent image using Python 3.12 and run Uvicorn as a non-root user |
+| `requirements.txt` | Pinned application dependencies: FastAPI, Uvicorn, Requests, and psycopg2 |
+| `requirements-dev.txt` | Application dependencies plus pytest, Flake8, and httpx2 for the API test client |
 | `pytest.ini` | Configure pytest imports and test discovery |
-| `tests/test_app.py` | Four tests covering configured sites, HTTP success, HTTP error, and timeout |
+| `tests/test_app.py` | Tests for configured sites, HTTP checks, the health check, and the read API |
 | `.env.example` | Names of the passwords required by the AWS lab |
 | `.gitignore` | Keep passwords, state, kubeconfigs, caches, and local files out of Git |
 | `.dockerignore` | Include only `app.py` and `requirements.txt` in the image build context |
@@ -96,7 +105,7 @@ Some Kubernetes terms used in the files:
 | `k8s/app/configmap.yaml` | Website URLs, database hostname, database name, and role names |
 | `k8s/app/postgres-init.yaml` | Create the agent and Grafana database roles on an empty database |
 | `k8s/app/postgres.yaml` | PostgreSQL StatefulSet, services, and a 5 GiB PVC |
-| `k8s/app/agent.yaml` | Agent Deployment, resource limits, and configuration references |
+| `k8s/app/agent.yaml` | Agent Deployment with health probes, resource limits, configuration references, and a Service on port 8000 |
 | `k8s/app/kustomization.yaml` | Combine application manifests and select the ECR image and tag |
 | `helm/argocd-values.yaml` | Configure a small Argo CD installation with an internal service |
 | `helm/prometheus-values.yaml` | Configure metric collection, resources, retention, and storage |
@@ -180,10 +189,15 @@ export DB_NAME=uptime
 export DB_USER=uptime_agent
 export DB_PASS=local-agent-password
 export MONITOR_SITES=https://google.com,https://github.com
-python app.py
+uvicorn app:app --port 8000
 ```
 
-You should see `Database initialized successfully` followed by website results. Leave the process running. In another terminal, inspect the records:
+You should see `Database initialized successfully` followed by website results. Leave the process running. In another terminal, call the API or inspect the records directly:
+
+```bash
+curl http://localhost:8000/sites
+curl 'http://localhost:8000/sites/history?site=https://google.com&limit=5'
+```
 
 ```bash
 docker exec uptime-local-db psql -U postgres -d uptime \
@@ -205,6 +219,7 @@ docker run --rm --name uptime-local-agent \
   -e DB_USER=uptime_agent \
   -e DB_PASS=local-agent-password \
   -e MONITOR_SITES=https://google.com,https://github.com \
+  --publish 8000:8000 \
   uptime-agent:local
 ```
 
@@ -447,6 +462,13 @@ ConfigMaps passed as environment variables are read when a pod starts. After a w
 
 ```bash
 kubectl -n uptime rollout restart deployment/uptime-agent
+```
+
+To call the agent API from your machine:
+
+```bash
+kubectl -n uptime port-forward service/uptime-agent 8000:8000
+curl http://localhost:8000/sites
 ```
 
 When editing Application definitions themselves:

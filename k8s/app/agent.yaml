@@ -26,6 +26,20 @@ spec:
         - name: python-agent
           image: uptime-agent:bootstrap
           imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 30
           envFrom:
             - configMapRef:
                 name: uptime-config
@@ -41,9 +55,21 @@ spec:
               memory: 64Mi
             limits:
               cpu: 250m
-              memory: 128Mi
+              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: uptime-agent
+spec:
+  selector:
+    app: uptime-agent
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
